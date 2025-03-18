@@ -1,5 +1,4 @@
 #import "DiagnosticTweak.h"
-#import "VCamInjector.h"
 #import <objc/runtime.h>
 
 // Definições de constantes que podem estar faltando
@@ -60,23 +59,15 @@
     
     // Analisar apenas a cada N frames para diagnóstico detalhado (reduzir sobrecarga)
     if (frameCounter % 30 == 0) {
-        // Extrair e registrar informações detalhadas do buffer
+        logToFile([NSString stringWithFormat:@"Frame #%llu processando em classe %@",
+                   frameCounter, NSStringFromClass([self class])]);
+        
+        // Extrair informações básicas do buffer
         CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
         if (imageBuffer) {
-            NSMutableDictionary *bufferInfo = [NSMutableDictionary dictionary];
-            
-            // Dimensões e formato
             size_t width = CVPixelBufferGetWidth(imageBuffer);
             size_t height = CVPixelBufferGetHeight(imageBuffer);
             OSType pixelFormat = CVPixelBufferGetPixelFormatType(imageBuffer);
-            size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
-            size_t dataSize = CVPixelBufferGetDataSize(imageBuffer);
-            
-            bufferInfo[@"width"] = @(width);
-            bufferInfo[@"height"] = @(height);
-            bufferInfo[@"bytesPerRow"] = @(bytesPerRow);
-            bufferInfo[@"dataSize"] = @(dataSize);
-            bufferInfo[@"pixelFormat"] = @(pixelFormat);
             
             // Converter formato para string legível
             char formatStr[5] = {0};
@@ -84,84 +75,22 @@
             formatStr[1] = (pixelFormat >> 16) & 0xFF;
             formatStr[2] = (pixelFormat >> 8) & 0xFF;
             formatStr[3] = pixelFormat & 0xFF;
+            
+            logToFile([NSString stringWithFormat:@"Buffer: %zux%zu, Formato: %s",
+                       width, height, formatStr]);
+            
+            // Extrair e registrar informações detalhadas do buffer
+            NSMutableDictionary *bufferInfo = [NSMutableDictionary dictionary];
+            
+            // Dimensões e formato
+            bufferInfo[@"width"] = @(width);
+            bufferInfo[@"height"] = @(height);
+            bufferInfo[@"bytesPerRow"] = @(CVPixelBufferGetBytesPerRow(imageBuffer));
+            bufferInfo[@"dataSize"] = @(CVPixelBufferGetDataSize(imageBuffer));
+            bufferInfo[@"pixelFormat"] = @(pixelFormat);
             bufferInfo[@"pixelFormatString"] = [NSString stringWithCString:formatStr encoding:NSASCIIStringEncoding];
             
-            // Planos de imagem (para formatos YUV)
-            size_t planeCount = CVPixelBufferGetPlaneCount(imageBuffer);
-            bufferInfo[@"planeCount"] = @(planeCount);
-            
-            if (planeCount > 0) {
-                NSMutableArray *planesInfo = [NSMutableArray array];
-                
-                for (size_t i = 0; i < planeCount; i++) {
-                    size_t planeWidth = CVPixelBufferGetWidthOfPlane(imageBuffer, i);
-                    size_t planeHeight = CVPixelBufferGetHeightOfPlane(imageBuffer, i);
-                    size_t planeBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(imageBuffer, i);
-                    
-                    [planesInfo addObject:@{
-                        @"index": @(i),
-                        @"width": @(planeWidth),
-                        @"height": @(planeHeight),
-                        @"bytesPerRow": @(planeBytesPerRow)
-                    }];
-                }
-                
-                bufferInfo[@"planes"] = planesInfo;
-            }
-            
-            // Metadados adicionais
-            CMFormatDescriptionRef formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer);
-            if (formatDesc) {
-                // Dimensões de vídeo
-                CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDesc);
-                bufferInfo[@"formatWidth"] = @(dimensions.width);
-                bufferInfo[@"formatHeight"] = @(dimensions.height);
-                
-                // Clean aperture (corrigido para usar a assinatura correta)
-                CGRect cleanAperture = CGRectZero;
-                cleanAperture = CMVideoFormatDescriptionGetCleanAperture(formatDesc, true);
-                bufferInfo[@"cleanAperture"] = NSStringFromCGRect(cleanAperture);
-                
-                // Para pixel aspect ratio, usamos uma abordagem alternativa ou comentamos se não estiver disponível
-                #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 130000
-                // Pixel aspect ratio para iOS 13+
-                //CGFloat horizRatio = 0.0, vertRatio = 0.0;
-                // Esta linha pode precisar ser adaptada conforme a API disponível
-                bufferInfo[@"pixelAspectRatioInfo"] = @"Verificando via outro método";
-                #endif
-                
-                // Espaço de cores
-                CFTypeRef colorAttachments = CMFormatDescriptionGetExtension(formatDesc, kCMFormatDescriptionExtension_ColorPrimaries);
-                if (colorAttachments) {
-                    bufferInfo[@"colorPrimaries"] = (__bridge NSString *)colorAttachments;
-                }
-                
-                // HDR
-                if (@available(iOS 10.0, *)) {
-                    CMVideoFormatDescriptionRef videoFormatDesc = (CMVideoFormatDescriptionRef)formatDesc;
-                    CFTypeRef colorSpaceRef = CMFormatDescriptionGetExtension(videoFormatDesc, kCMFormatDescriptionExtension_ColorSpace);
-CFStringRef colorSpace = colorSpaceRef ? (CFStringRef)colorSpaceRef : NULL;
-                    if (colorSpace) {
-                        bufferInfo[@"colorSpace"] = (__bridge NSString *)colorSpace;
-                        
-                        BOOL isHDR = (CFStringCompare(colorSpace, kCVImageBufferColorPrimaries_ITU_R_2020, 0) == kCFCompareEqualTo ||
-                                     CFStringCompare(colorSpace, kCVImageBufferColorPrimaries_P3_D65, 0) == kCFCompareEqualTo);
-                        
-                        bufferInfo[@"isHDR"] = @(isHDR);
-                    }
-                }
-            }
-            
-            // Timing e apresentação
-            CMTime presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-            CMTime decodeTime = CMSampleBufferGetDecodeTimeStamp(sampleBuffer);
-            CMTime duration = CMSampleBufferGetDuration(sampleBuffer);
-            
-            bufferInfo[@"presentationTimeSeconds"] = @(CMTimeGetSeconds(presentationTime));
-            bufferInfo[@"decodeTimeSeconds"] = @(CMTimeGetSeconds(decodeTime));
-            bufferInfo[@"durationSeconds"] = @(CMTimeGetSeconds(duration));
-            
-            // Informações de conexão
+            // Conexão e orientação
             if (connection) {
                 NSMutableDictionary *connectionInfo = [NSMutableDictionary dictionary];
                 
@@ -186,59 +115,100 @@ CFStringRef colorSpace = colorSpaceRef ? (CFStringRef)colorSpaceRef : NULL;
                             break;
                     }
                     connectionInfo[@"orientationString"] = orientationString;
+                    logToFile([NSString stringWithFormat:@"Orientação: %@", orientationString]);
                 }
                 
                 connectionInfo[@"videoMirrored"] = @(connection.isVideoMirrored);
                 
-                if ([connection isVideoStabilizationSupported]) {
-                    connectionInfo[@"videoStabilizationSupported"] = @YES;
-                    connectionInfo[@"videoStabilizationMode"] = @(connection.activeVideoStabilizationMode);
-                }
-                
                 bufferInfo[@"connection"] = connectionInfo;
             }
             
-            // Adicionar ao log de diagnóstico
-            addDiagnosticData(@"frameDetailedAnalysis", bufferInfo);
+            // Timing e timestamps
+            CMTime presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+            bufferInfo[@"presentationTimeSeconds"] = @(CMTimeGetSeconds(presentationTime));
             
-            // Para frames específicos, registrar informações de ponto potencial de injeção
-            if (frameCounter % 300 == 0) { // A cada ~10s em 30fps
-                NSMutableDictionary *injectionInfo = [NSMutableDictionary dictionary];
-                
-                injectionInfo[@"delegateClass"] = NSStringFromClass([self class]);
-                injectionInfo[@"outputClass"] = NSStringFromClass([output class]);
-                injectionInfo[@"frameCounter"] = @(frameCounter);
-                
-                // Analisar a hierarquia de objetos para identificar o aplicativo
-                NSMutableArray *classHierarchy = [NSMutableArray array];
-                Class currentClass = [self class];
-                while (currentClass) {
-                    [classHierarchy addObject:NSStringFromClass(currentClass)];
-                    currentClass = class_getSuperclass(currentClass);
-                }
-                injectionInfo[@"delegateHierarchy"] = classHierarchy;
-                
-                // Verificar métodos relevantes
-                NSMutableDictionary *methods = [NSMutableDictionary dictionary];
-                methods[@"captureOutput:didOutputSampleBuffer:fromConnection:"] =
-                    @([self respondsToSelector:@selector(captureOutput:didOutputSampleBuffer:fromConnection:)]);
-                methods[@"captureOutput:didDropSampleBuffer:fromConnection:"] =
-                    @([self respondsToSelector:@selector(captureOutput:didDropSampleBuffer:fromConnection:)]);
-                
-                injectionInfo[@"methods"] = methods;
-                
-                // Registrar informações do aplicativo
-                injectionInfo[@"appName"] = [[NSProcessInfo processInfo] processName];
-                injectionInfo[@"bundleId"] = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
-                
-                addDiagnosticData(@"potentialInjectionPoint", injectionInfo);
-                
-                // Log detalhado
-                logToFile([NSString stringWithFormat:@"Ponto potencial de injeção identificado: %@ (%@)",
-                          NSStringFromClass([self class]), [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown"]);
-            }
+            // Adicionar dados do buffer ao diagnóstico
+            addDiagnosticData(@"frameAnalysis", bufferInfo);
         }
     }
+    
+    // Para frames específicos, registrar informações de ponto potencial de injeção
+    if (frameCounter % 300 == 0) { // A cada ~10s em 30fps
+        NSMutableDictionary *injectionInfo = [NSMutableDictionary dictionary];
+        
+        // Informações básicas
+        injectionInfo[@"delegateClass"] = NSStringFromClass([self class]);
+        injectionInfo[@"outputClass"] = NSStringFromClass([output class]);
+        injectionInfo[@"frameCounter"] = @(frameCounter);
+        
+        // Analisar a hierarquia de objetos para identificar o aplicativo
+        NSMutableArray *classHierarchy = [NSMutableArray array];
+        Class currentClass = [self class];
+        while (currentClass) {
+            [classHierarchy addObject:NSStringFromClass(currentClass)];
+            currentClass = class_getSuperclass(currentClass);
+        }
+        injectionInfo[@"delegateHierarchy"] = classHierarchy;
+        
+        // Verificar métodos relevantes
+        NSMutableDictionary *methods = [NSMutableDictionary dictionary];
+        methods[@"captureOutput:didOutputSampleBuffer:fromConnection:"] =
+            @([self respondsToSelector:@selector(captureOutput:didOutputSampleBuffer:fromConnection:)]);
+        methods[@"captureOutput:didDropSampleBuffer:fromConnection:"] =
+            @([self respondsToSelector:@selector(captureOutput:didDropSampleBuffer:fromConnection:)]);
+        
+        injectionInfo[@"methods"] = methods;
+        
+        // Registrar informações do aplicativo
+        injectionInfo[@"appName"] = [[NSProcessInfo processInfo] processName];
+        injectionInfo[@"bundleId"] = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+        
+        addDiagnosticData(@"potentialInjectionPoint", injectionInfo);
+        
+        // Log detalhado
+        logToFile([NSString stringWithFormat:@"Ponto potencial de injeção identificado: %@ (%@)",
+                  NSStringFromClass([self class]), [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown"]);
+    }
+    
+    %orig;
+}
+
+%end
+
+// Diagnóstico da camada de captura de foto (usando AVCapturePhotoOutput para iOS 10+)
+%hook AVCapturePhotoOutput
+
+- (void)capturePhotoWithSettings:(AVCapturePhotoSettings *)settings delegate:(id<AVCapturePhotoCaptureDelegate>)delegate {
+    logToFile(@"Captura de foto iniciada");
+    
+    // Análise das configurações
+    NSMutableDictionary *photoInfo = [NSMutableDictionary dictionary];
+    photoInfo[@"delegateClass"] = NSStringFromClass([delegate class]);
+    photoInfo[@"flashEnabled"] = @(settings.flashMode != AVCaptureFlashModeOff);
+    photoInfo[@"photoQualityPrioritization"] = @(settings.photoQualityPrioritization);
+    
+    if (@available(iOS 13.0, *)) {
+        if (settings.photoQualityPrioritization != 0) {
+            NSString *qualityString;
+            switch (settings.photoQualityPrioritization) {
+                case AVCapturePhotoQualityPrioritizationSpeed:
+                    qualityString = @"Speed";
+                    break;
+                case AVCapturePhotoQualityPrioritizationBalanced:
+                    qualityString = @"Balanced";
+                    break;
+                case AVCapturePhotoQualityPrioritizationQuality:
+                    qualityString = @"Quality";
+                    break;
+                default:
+                    qualityString = @"Unknown";
+            }
+            photoInfo[@"photoQualityPrioritizationString"] = qualityString;
+            logToFile([NSString stringWithFormat:@"Prioridade de qualidade: %@", qualityString]);
+        }
+    }
+    
+    addDiagnosticData(@"photoCapture", photoInfo);
     
     %orig;
 }
@@ -323,59 +293,6 @@ CFStringRef colorSpace = colorSpaceRef ? (CFStringRef)colorSpaceRef : NULL;
                 }
             }
             
-            // Capacidades HDR - usamos verificação segura
-            if ([self respondsToSelector:@selector(isAutoHDRSupported)]) {
-                formatInfo[@"autoHDRSupported"] = @NO; // Valor padrão seguro
-            }
-            
-            if (@available(iOS 13.0, *)) {
-                // Verificar se o método existe antes de chamar
-                SEL videoHDRSelector = NSSelectorFromString(@"isVideoHDRSupported");
-                if ([activeFormat respondsToSelector:videoHDRSelector]) {
-                    // Usar NSInvocation para chamar o método de forma segura
-                    NSMethodSignature *signature = [activeFormat methodSignatureForSelector:videoHDRSelector];
-                    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
-                    [invocation setSelector:videoHDRSelector];
-                    [invocation setTarget:activeFormat];
-                    [invocation invoke];
-                    BOOL isHDRSupported;
-                    [invocation getReturnValue:&isHDRSupported];
-                    formatInfo[@"videoHDRSupported"] = @(isHDRSupported);
-                }
-            }
-            
-            // Capacidades de profundidade - verificação segura
-            if (@available(iOS 11.0, *)) {
-                SEL depthDataSelector = NSSelectorFromString(@"isDepthDataDeliverySupported");
-                if ([activeFormat respondsToSelector:depthDataSelector]) {
-                    NSMethodSignature *signature = [activeFormat methodSignatureForSelector:depthDataSelector];
-                    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
-                    [invocation setSelector:depthDataSelector];
-                    [invocation setTarget:activeFormat];
-                    [invocation invoke];
-                    BOOL isDepthSupported;
-                    [invocation getReturnValue:&isDepthSupported];
-                    formatInfo[@"depthDataSupported"] = @(isDepthSupported);
-                }
-                
-                SEL portraitMatteSelector = NSSelectorFromString(@"isPortraitEffectsMatteDeliverySupported");
-                if ([activeFormat respondsToSelector:portraitMatteSelector]) {
-                    NSMethodSignature *signature = [activeFormat methodSignatureForSelector:portraitMatteSelector];
-                    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
-                    [invocation setSelector:portraitMatteSelector];
-                    [invocation setTarget:activeFormat];
-                    [invocation invoke];
-                    BOOL isMatteSupported;
-                    [invocation getReturnValue:&isMatteSupported];
-                    formatInfo[@"portraitEffectsMatteSupported"] = @(isMatteSupported);
-                }
-            }
-            
-            // Zoom
-            formatInfo[@"minZoomFactor"] = @(self.minAvailableVideoZoomFactor);
-            formatInfo[@"maxZoomFactor"] = @(self.maxAvailableVideoZoomFactor);
-            formatInfo[@"currentZoomFactor"] = @(self.videoZoomFactor);
-            
             // Log para diagnóstico
             addDiagnosticData(@"deviceDetailedCapabilities", formatInfo);
             
@@ -399,6 +316,33 @@ CFStringRef colorSpace = colorSpaceRef ? (CFStringRef)colorSpaceRef : NULL;
     }
     
     return result;
+}
+
++ (AVCaptureDevice *)defaultDeviceWithMediaType:(AVMediaType)mediaType {
+    AVCaptureDevice *device = %orig;
+    
+    if (device && [mediaType isEqualToString:AVMediaTypeVideo]) {
+        NSString *positionString = @"Unknown";
+        switch (device.position) {
+            case AVCaptureDevicePositionFront:
+                positionString = @"Front";
+                g_usingFrontCamera = YES;
+                break;
+            case AVCaptureDevicePositionBack:
+                positionString = @"Back";
+                g_usingFrontCamera = NO;
+                break;
+            case AVCaptureDevicePositionUnspecified:
+                positionString = @"Unspecified";
+                g_usingFrontCamera = NO;
+                break;
+        }
+        
+        logToFile([NSString stringWithFormat:@"Selecionado dispositivo padrão: %@ (%@)",
+                   device.localizedName ?: @"unknown", positionString]);
+    }
+    
+    return device;
 }
 
 %end
@@ -472,39 +416,71 @@ CFStringRef colorSpace = colorSpaceRef ? (CFStringRef)colorSpaceRef : NULL;
 
 %end
 
-// Monitoramento das configurações de buffer
-%hook CMFormatDescription
+// Diagnóstico de sessão
+%hook AVCaptureSession
 
-+ (CMFormatDescriptionRef)formatDescriptionWithMediaType:(CMMediaType)mediaType
-                                               mediaSubType:(FourCharCode)mediaSubType
-                                                 extensions:(NSDictionary *)extensions {
-    CMFormatDescriptionRef result = %orig;
+- (void)startRunning {
+    logToFile(@"AVCaptureSession startRunning chamado");
     
-    // Converter FourCC para string legível
-    char mediaTypeStr[5] = {0};
-    char mediaSubTypeStr[5] = {0};
-    mediaTypeStr[0] = (mediaType >> 24) & 0xFF;
-    mediaTypeStr[1] = (mediaType >> 16) & 0xFF;
-    mediaTypeStr[2] = (mediaType >> 8) & 0xFF;
-    mediaTypeStr[3] = mediaType & 0xFF;
-    mediaSubTypeStr[0] = (mediaSubType >> 24) & 0xFF;
-    mediaSubTypeStr[1] = (mediaSubType >> 16) & 0xFF;
-    mediaSubTypeStr[2] = (mediaSubType >> 8) & 0xFF;
-    mediaSubTypeStr[3] = mediaSubType & 0xFF;
+    // Verificar inputs e outputs atuais
+    NSMutableDictionary *sessionInfo = [NSMutableDictionary dictionary];
+    sessionInfo[@"inputCount"] = @(self.inputs.count);
+    sessionInfo[@"outputCount"] = @(self.outputs.count);
+    sessionInfo[@"preset"] = self.sessionPreset ?: @"default";
     
-    NSString *typeStr = [NSString stringWithCString:mediaTypeStr encoding:NSASCIIStringEncoding];
-    NSString *subTypeStr = [NSString stringWithCString:mediaSubTypeStr encoding:NSASCIIStringEncoding];
+    NSMutableArray *inputTypes = [NSMutableArray array];
+    for (AVCaptureInput *input in self.inputs) {
+        [inputTypes addObject:NSStringFromClass([input class])];
+    }
+    sessionInfo[@"inputTypes"] = inputTypes;
     
-    logToFile([NSString stringWithFormat:@"Formato criado: %@/%@", typeStr, subTypeStr]);
+    NSMutableArray *outputTypes = [NSMutableArray array];
+    for (AVCaptureOutput *output in self.outputs) {
+        [outputTypes addObject:NSStringFromClass([output class])];
+    }
+    sessionInfo[@"outputTypes"] = outputTypes;
     
-    addDiagnosticData(@"formatDescription", @{
-        @"mediaType": typeStr,
-        @"mediaSubType": subTypeStr,
-        @"extensions": extensions ?: @{},
-        @"timestamp": [NSDate date].description
-    });
+    addDiagnosticData(@"sessionStarted", sessionInfo);
     
-    return result;
+    %orig;
+}
+
+- (void)stopRunning {
+    logToFile(@"AVCaptureSession stopRunning chamado");
+    addDiagnosticData(@"sessionStopped", @{@"timestamp": [NSDate date].description});
+    
+    %orig;
+}
+
+- (void)addInput:(AVCaptureInput *)input {
+    NSString *inputClass = NSStringFromClass([input class]);
+    
+    if ([input isKindOfClass:[AVCaptureDeviceInput class]]) {
+        AVCaptureDeviceInput *deviceInput = (AVCaptureDeviceInput *)input;
+        AVCaptureDevice *device = deviceInput.device;
+        NSString *deviceName = device.localizedName ?: @"unknown";
+        
+        logToFile([NSString stringWithFormat:@"AVCaptureSession adicionando input: %@ (dispositivo: %@)",
+                   inputClass, deviceName]);
+        
+        // Atualizar variáveis globais para diagnóstico
+        if (device.position == AVCaptureDevicePositionFront) {
+            g_usingFrontCamera = YES;
+        } else if (device.position == AVCaptureDevicePositionBack) {
+            g_usingFrontCamera = NO;
+        }
+    } else {
+        logToFile([NSString stringWithFormat:@"AVCaptureSession adicionando input: %@", inputClass]);
+    }
+    
+    %orig;
+}
+
+- (void)addOutput:(AVCaptureOutput *)output {
+    NSString *outputClass = NSStringFromClass([output class]);
+    logToFile([NSString stringWithFormat:@"AVCaptureSession adicionando output: %@", outputClass]);
+    
+    %orig;
 }
 
 %end

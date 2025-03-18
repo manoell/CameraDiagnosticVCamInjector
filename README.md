@@ -1,313 +1,79 @@
-# CameraDiagnostic + VCamInjector
-
-![Badge](https://img.shields.io/badge/iOS-14.0%2B-blue)
-![Badge](https://img.shields.io/badge/Status-Funcional-green)
+# CameraDiagnostic + VCamInjector - Projeto de Substituição de Feed de Câmera iOS
 
 ## Visão Geral
+Este projeto visa desenvolver uma solução para substituição do feed da câmera em iOS, oferecendo a capacidade de injetar imagens, vídeos ou streams em aplicativos que utilizam a câmera do dispositivo.
 
-Este projeto é uma solução híbrida para diagnóstico e substituição do feed da câmera do iOS. É dividido em dois componentes principais:
+## Componentes Principais
+1. **DiagnosticTweak**: Componente responsável por coletar informações detalhadas sobre o pipeline de processamento da câmera.
+2. **VCamInjector**: Componente que implementa a substituição do feed da câmera.
 
-1. **CameraDiagnostic**: Ferramenta que monitora e registra detalhadamente o funcionamento da câmera em aplicativos iOS.
-2. **VCamInjector**: Sistema de injeção que substitui o feed de vídeo da câmera em tempo real, mantendo metadados e compatibilidade.
+## Estado Atual do Projeto
 
-## Objetivo
+### Pipeline de Câmera Identificado
+- A câmera nativa do iOS usa `AVCaptureSession` com preset "AVCaptureSessionPresetPhoto"
+- Os formatos de vídeo variam por câmera:
+  - Câmera traseira: 4032x3024 com formato "420f" (YUV/NV12)
+  - Câmera frontal: 1920x1080 com formato "420v" (YUV/YV12)
+- Taxa de quadros: 3-30 FPS
 
-O objetivo deste projeto é possibilitar uma substituição transparente e indetectável do feed de câmera do iOS, utilizando dados detalhados coletados sobre o pipeline de processamento de imagem para garantir compatibilidade total com aplicativos. O principal caso de uso é substituir o feed da câmera com um stream de vídeo recebido via WebRTC, criando uma solução completa de câmera virtual para iOS.
+### Classes-Chave Identificadas
+- `CAMCaptureEngine`: Parece ser o gerenciador central da captura de mídia em apps nativos
+- `AVCaptureSession`: Coordena o fluxo entre dispositivos de entrada e saídas
+- Outputs identificados:
+  - `AVCapturePhotoOutput`: Para fotos
+  - `CAMCaptureMovieFileOutput`: Para gravação de vídeo
+  - `AVCaptureVideoThumbnailOutput`: Para thumbnails
+  - `AVCaptureMetadataOutput`: Para metadados
 
-## Arquitetura da Solução
+### Descoberta Importante
+O app nativo de Câmera do iOS **não** usa o mecanismo padrão de delegate `AVCaptureVideoDataOutputSampleBufferDelegate` para processar frames. O delegate do `AVCaptureVideoDataOutput` é configurado como `<nil>`, indicando um caminho não-padrão de processamento.
 
-### Componente de Diagnóstico (CameraDiagnostic)
+### Prováveis Pontos de Injeção
 
-Este componente realiza uma análise detalhada do pipeline de câmera, registrando:
+1. **Antes do processamento pela CAMCaptureEngine**
+   - Interceptar frames antes que cheguem ao mecanismo de processamento principal
 
-- Configurações precisas de sessão de câmera
-- Formatos de pixel e resolução em cada estágio
-- Orientações e transformações de vídeo
-- Metadados de foto e vídeo
-- Pontos potenciais para injeção
+2. **Interceptação de nível baixo**
+   - Possível interceptação na camada entre o hardware da câmera e o AVFoundation
+   - Substituir o feed em nível de driver/device
 
-Arquivos principais:
-- `DiagnosticTweak.h/.xm`: Define o núcleo do sistema de diagnóstico
-- `DiagnosticExtension.xm`: Análise avançada para identificar pontos de injeção
+3. **Intercepção de Buffer**
+   - O formato "420f" (0x34323066) é usado para frames de vídeo
+   - A substituição precisa criar buffers deste mesmo formato para compatibilidade
 
-### Componente de Injeção (VCamInjector)
+### Abordagem Técnica Recomendada
 
-Este componente implementa a substituição híbrida, que:
+1. **Adicionar Hooks para CAMCaptureEngine**
+   - Investigar métodos internos relacionados à recepção de frames
+   - Possíveis métodos: qualquer método relacionado a frames, processamento de imagem
 
-1. Intercepta frames de vídeo no ponto ideal do pipeline
-2. Substitui o conteúdo visual mantendo metadados e propriedades originais
-3. Preserva as expectativas das aplicações quanto a formato, timing e propriedades
+2. **Foco na Substituição de Frames Completa**
+   - Não apenas visual, mas substituição que afeta tanto preview quanto outputs
 
-Arquivos principais:
-- `VCamInjector.h/.mm`: Implementa o sistema de injeção e substituição de frames
-- `VCamHook.xm`: Ganchos específicos para pontos de injeção identificados
+3. **Preservação de Metadados**
+   - Manter timing, orientação e outras propriedades ao substituir frames
 
-## Como Funciona a Substituição Híbrida
+## Código Base Disponível
 
-A abordagem híbrida combina:
+- **DiagnosticTweak.xm**: Implementa diagnóstico e registro de eventos
+- **DiagnosticExtension.xm**: Implementa diagnóstico avançado do pipeline
+- **VCamHook.xm**: Implementa hooks para interceptação de frames
+- **VCamInjector.mm**: Implementa a criação de frames substitutos
 
-1. **Interceptação de frames**: Intercepta o fluxo de vídeo em `captureOutput:didOutputSampleBuffer:fromConnection:`, ponto onde cada frame é entregue ao aplicativo.
+## Arquivos de Configuração
 
-2. **Preservação de metadados**: Mantém todos os metadados originais (timestamps, formato, orientação) para uma substituição transparente.
-
-3. **Adaptação dinâmica**: Ajusta-se automaticamente a diferentes resoluções, orientações e formatos conforme o diagnóstico em tempo real.
-
-4. **Gerenciamento de sessão**: Monitora e adapta-se a mudanças na sessão de câmera para manter consistência.
-
-## Pontos Críticos de Injeção
-
-O diagnóstico identificou os seguintes pontos ideais para injeção:
-
-1. **Nível de frame (implementado)**
-   - Em `captureOutput:didOutputSampleBuffer:fromConnection:`
-   - Vantagem: Acesso direto ao buffer antes do processamento pelo app
-
-2. **Nível de renderização (monitorado)**
-   - Em `AVCaptureVideoPreviewLayer` e `AVSampleBufferDisplayLayer` 
-   - Utilizado para diagnóstico e confirmação de sucesso da injeção
-
-## Instalação e Uso
-
-1. **Prepare o ambiente:**
-   ```bash
-   export THEOS=/opt/theos
-   ```
-
-2. **Compile o projeto:**
-   ```bash
-   make package
-   ```
-
-3. **Instale no dispositivo com jailbreak:**
-   ```bash
-   make install
-   ```
-
-4. **Configure o feed substituto:**
-   - Crie o diretório para os arquivos necessários:
-     ```bash
-     mkdir -p /var/mobile/Library/Application\ Support/VCamMJPEG/
-     ```
-   - Coloque a imagem ou vídeo em `/var/mobile/Library/Application Support/VCamMJPEG/`
-   - Edite a configuração em `/var/mobile/Library/Application Support/VCamMJPEG/config.plist`
-
-### Teste com Diferentes Fontes de Feed
-
-#### Imagem Estática (padrão)
-```xml
-<dict>
-    <key>sourceType</key>
-    <string>file</string>
-    <key>sourcePath</key>
-    <string>/var/mobile/Library/Application Support/VCamMJPEG/default.jpg</string>
-    <key>preserveAspectRatio</key>
-    <true/>
-</dict>
-```
-
-#### Stream WebRTC (quando implementado)
-```xml
-<dict>
-    <key>sourceType</key>
-    <string>webrtc</string>
-    <key>webRTCServerURL</key>
-    <string>wss://your-signaling-server.com</string>
-    <key>webRTCRoomID</key>
-    <string>camera-feed-room</string>
-    <key>preserveAspectRatio</key>
-    <true/>
-</dict>
-```
-
-### Verificando o Funcionamento
-
-Para confirmar que o sistema está funcionando:
-
-1. **Verificação visual:** Abra um aplicativo de câmera e confirme se o feed foi substituído
-2. **Verificação de logs:** Examine `/var/tmp/CameraDiagnostic/diagnostic.log`
-3. **Capture fotos/vídeos:** Tire fotos ou grave vídeos para confirmar que o conteúdo substituído é usado
-4. **Teste em diferentes apps:** Verifique a compatibilidade em Camera.app, Instagram, WhatsApp, etc.
-
-Se estiver usando WebRTC, o log mostrará informações de conexão e estatísticas de streaming.
-
-## Diagnóstico e Logs
-
-Os logs são armazenados em:
-- `/var/tmp/CameraDiagnostic/diagnostic.log` - Log principal
-- `/var/tmp/CameraDiagnostic/[app]_[bundle]_diagnostics.json` - Dados por aplicativo
-
-## Implementação do Suporte a WebRTC
-
-A arquitetura permite facilmente a integração de streams WebRTC como fonte de substituição para a câmera. Abaixo estão os passos para implementar esta funcionalidade:
-
-### 1. Configuração do Componente WebRTC
-
-1. **Adicionar a biblioteca WebRTC ao projeto**
-   ```bash
-   # Adicionar dependências no Makefile
-   VCamInjector_LIBRARIES = WebRTC
-   ```
-
-2. **Criar uma classe gerenciadora de WebRTC**
-   - Crie um arquivo `WebRTCManager.h/mm` para lidar com a conexão e recepção de frames
-   - Implemente métodos para estabelecer conexão e receber frames de vídeo
-   - Mantenha uma fila de frames mais recentes para evitar inconsistências temporais
-
-### 2. Integração com o VCamInjector
-
-3. **Adicionar novo tipo de fonte em VCamInjector.h**
-   ```objective-c
-   // Em VCamInjector.mm, adicionar constante
-   static NSString * const kSourceTypeWebRTC = @"webrtc";
-   ```
-
-4. **Implementar método para obter frames WebRTC**
-   ```objective-c
-   // Adicionar em VCamInjector.mm
-   - (CVPixelBufferRef)pixelBufferFromWebRTC {
-       if (!_webRTCManager || !_webRTCManager.isConnected) {
-           return NULL;
-       }
-       
-       // Obter o frame mais recente da stream WebRTC
-       RTCVideoFrame *rtcFrame = [_webRTCManager lastReceivedFrame];
-       if (!rtcFrame) {
-           return NULL;
-       }
-       
-       // Converter frame WebRTC para CVPixelBuffer
-       CVPixelBufferRef pixelBuffer = [self convertRTCFrameToPixelBuffer:rtcFrame];
-       
-       return pixelBuffer;
-   }
-   
-   - (CVPixelBufferRef)convertRTCFrameToPixelBuffer:(RTCVideoFrame *)frame {
-       // Implementação da conversão do formato WebRTC para CVPixelBuffer
-       // Detalhes dependem da biblioteca WebRTC específica
-       // Retorna um CVPixelBuffer compatível com o pipeline da câmera
-   }
-   ```
-
-5. **Modificar processVideoSampleBuffer para usar a fonte WebRTC**
-   ```objective-c
-   // Em VCamInjector.mm, método processVideoSampleBuffer
-   if ([self.sourceType isEqualToString:kSourceTypeWebRTC]) {
-       // Usar WebRTC como fonte
-       replacementBuffer = [self pixelBufferFromWebRTC];
-   }
-   ```
-
-### 3. Implementação do Cliente WebRTC
-
-6. **Componentes necessários na classe WebRTCManager**
-   - Gerenciador de sinalização (Signaling)
-   - Estabelecimento de conexão P2P 
-   - Recepção e decodificação de frames de vídeo
-   - Conversão para o formato necessário do iOS
-
-7. **Lidando com conectividade**
-   ```objective-c
-   // Em WebRTCManager.mm
-   - (void)connectToSignalingServer:(NSString *)serverURL roomID:(NSString *)roomID {
-       // Conectar ao servidor de sinalização
-       // Configurar candidatos ICE
-       // Estabelecer conexão P2P
-   }
-   
-   - (void)handleVideoTrack:(RTCVideoTrack *)videoTrack {
-       // Configurar recepção de frames
-       // Implementar delegate para receber frames
-   }
-   ```
-
-8. **Configuração de adaptação de qualidade**
-   - Implementar detecção de largura de banda
-   - Ajustar resolução e framerate dinâmicamente
-   - Sincronizar com as capacidades do dispositivo
-
-### 4. Interface de Configuração
-
-9. **Configurações específicas de WebRTC**
-   ```objective-c
-   // Em VCamConfiguration.h, adicionar propriedades
-   @property (nonatomic, strong) NSString *webRTCServerURL;
-   @property (nonatomic, strong) NSString *webRTCRoomID;
-   @property (nonatomic, assign) BOOL webRTCAutomaticQuality;
-   @property (nonatomic, assign) CGSize webRTCPreferredResolution;
-   ```
-
-10. **Salvar e carregar as configurações**
-    ```objective-c
-    // Em VCamConfiguration.mm, método currentSettings
-    @{
-        ...
-        @"webRTCServerURL": self.webRTCServerURL ?: @"",
-        @"webRTCRoomID": self.webRTCRoomID ?: @"",
-        @"webRTCAutomaticQuality": @(self.webRTCAutomaticQuality),
-        @"webRTCPreferredWidth": @(self.webRTCPreferredResolution.width),
-        @"webRTCPreferredHeight": @(self.webRTCPreferredResolution.height)
-    }
-    ```
-
-### 5. Considerações Especiais para WebRTC
-
-- **Latência**: Otimizar para minimizar atraso entre recepção e exibição
-- **Recuperação de perda de pacotes**: Implementar métodos para lidar com frames perdidos
-- **Sincronização de tempo**: Garantir que o timestamping dos frames WebRTC seja compatível
-- **Adaptação de formato**: Converter entre formatos de cor e compressão usados por WebRTC e AVFoundation
-- **Uso de recursos**: Monitorar uso de CPU e memória para evitar impacto no desempenho
-
-### 6. Exemplo de Configuração WebRTC
-
-Uma configuração típica no arquivo config.plist seria:
-
-```xml
-<dict>
-    <key>sourceType</key>
-    <string>webrtc</string>
-    <key>webRTCServerURL</key>
-    <string>wss://your-signaling-server.com</string>
-    <key>webRTCRoomID</key>
-    <string>camera-feed-room</string>
-    <key>webRTCAutomaticQuality</key>
-    <true/>
-    <key>preserveAspectRatio</key>
-    <true/>
-    <key>mirrorOutput</key>
-    <true/>
-</dict>
-```
-
-## Solução de Problemas
-
-Se encontrar problemas, verifique:
-
-1. Se o diretório `/var/mobile/Library/Application Support/VCamMJPEG/` existe
-2. Se a imagem `default.jpg` está presente e é válida
-3. Os logs em `/var/tmp/CameraDiagnostic/diagnostic.log` para erros específicos
-4. Se a versão do iOS é compatível (14.0+)
+- Localização: `/var/mobile/Library/Application Support/VCamMJPEG/`
+- Arquivo de configuração: `config.plist`
+- Imagem padrão: `default.jpg`
 
 ## Próximos Passos
 
-1. **Implementação de WebRTC**
-   - Integração completa do cliente WebRTC
-   - Otimização de desempenho para streaming em tempo real
-   - Gerenciamento de conexão e reconexão automática
-
-2. **Melhoria de desempenho**
-   - Otimização de processamento de buffer para reduzir latência
-   - Implementação de cache inteligente para formatos comuns
-
-3. **Filtros em tempo real**
-   - Implementação de efeitos de câmera personalizados
-   - Pipeline de processamento de imagem extensível
+1. **Diagnóstico mais profundo da classe CAMCaptureEngine**
+2. **Identificação do mecanismo exato usado pelo iOS para processamento de frames**
+3. **Implementação da substituição no ponto ideal identificado**
 
 ## Requisitos
 
-- iOS 14.0 ou superior
+- iOS 14.0+
 - Dispositivo com jailbreak
 - Theos para compilação
-
-## Licença
-
-Este projeto é fornecido para uso educacional e pessoal. Não é permitido uso comercial sem autorização.
