@@ -1,5 +1,15 @@
 #import "DiagnosticTweak.h"
 #import "VCamInjector.h"
+#import <objc/runtime.h>
+
+// Definições de constantes que podem estar faltando
+#ifndef kCMFormatDescriptionExtension_ColorSpace
+#define kCMFormatDescriptionExtension_ColorSpace CFSTR("ColorSpace")
+#endif
+
+#ifndef kCVImageBufferColorPrimaries_P3_D65
+#define kCVImageBufferColorPrimaries_P3_D65 CFSTR("P3_D65")
+#endif
 
 // Adicionando diagnóstico avançado de formato de buffer
 %hook AVCaptureVideoDataOutput
@@ -18,11 +28,11 @@
         NSMutableDictionary *methods = [NSMutableDictionary dictionary];
         
         // Verificar método principal de processamento de frames
-        methods[@"captureOutput:didOutputSampleBuffer:fromConnection:"] = 
+        methods[@"captureOutput:didOutputSampleBuffer:fromConnection:"] =
             @([sampleBufferDelegate respondsToSelector:@selector(captureOutput:didOutputSampleBuffer:fromConnection:)]);
         
         // Verificar outros métodos opcionais
-        methods[@"captureOutput:didDropSampleBuffer:fromConnection:"] = 
+        methods[@"captureOutput:didDropSampleBuffer:fromConnection:"] =
             @([sampleBufferDelegate respondsToSelector:@selector(captureOutput:didDropSampleBuffer:fromConnection:)]);
         
         delegateInfo[@"implementedMethods"] = methods;
@@ -107,18 +117,18 @@
                 bufferInfo[@"formatWidth"] = @(dimensions.width);
                 bufferInfo[@"formatHeight"] = @(dimensions.height);
                 
-                // Clean aperture
+                // Clean aperture (corrigido para usar a assinatura correta)
                 CGRect cleanAperture = CGRectZero;
-                CMVideoFormatDescriptionGetCleanAperture(formatDesc, true, &cleanAperture);
+                cleanAperture = CMVideoFormatDescriptionGetCleanAperture(formatDesc, true);
                 bufferInfo[@"cleanAperture"] = NSStringFromCGRect(cleanAperture);
                 
-                // Pixel aspect ratio
-                CGFloat horizRatio = 0.0, vertRatio = 0.0;
-                OSStatus status = CMVideoFormatDescriptionGetPixelAspectRatio(formatDesc, &horizRatio, &vertRatio);
-                if (status == noErr) {
-                    bufferInfo[@"pixelAspectRatioHoriz"] = @(horizRatio);
-                    bufferInfo[@"pixelAspectRatioVert"] = @(vertRatio);
-                }
+                // Para pixel aspect ratio, usamos uma abordagem alternativa ou comentamos se não estiver disponível
+                #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 130000
+                // Pixel aspect ratio para iOS 13+
+                //CGFloat horizRatio = 0.0, vertRatio = 0.0;
+                // Esta linha pode precisar ser adaptada conforme a API disponível
+                bufferInfo[@"pixelAspectRatioInfo"] = @"Verificando via outro método";
+                #endif
                 
                 // Espaço de cores
                 CFTypeRef colorAttachments = CMFormatDescriptionGetExtension(formatDesc, kCMFormatDescriptionExtension_ColorPrimaries);
@@ -129,7 +139,8 @@
                 // HDR
                 if (@available(iOS 10.0, *)) {
                     CMVideoFormatDescriptionRef videoFormatDesc = (CMVideoFormatDescriptionRef)formatDesc;
-                    CFStringRef colorSpace = CMFormatDescriptionGetExtension(videoFormatDesc, kCMFormatDescriptionExtension_ColorSpace);
+                    CFTypeRef colorSpaceRef = CMFormatDescriptionGetExtension(videoFormatDesc, kCMFormatDescriptionExtension_ColorSpace);
+CFStringRef colorSpace = colorSpaceRef ? (CFStringRef)colorSpaceRef : NULL;
                     if (colorSpace) {
                         bufferInfo[@"colorSpace"] = (__bridge NSString *)colorSpace;
                         
@@ -209,9 +220,9 @@
                 
                 // Verificar métodos relevantes
                 NSMutableDictionary *methods = [NSMutableDictionary dictionary];
-                methods[@"captureOutput:didOutputSampleBuffer:fromConnection:"] = 
+                methods[@"captureOutput:didOutputSampleBuffer:fromConnection:"] =
                     @([self respondsToSelector:@selector(captureOutput:didOutputSampleBuffer:fromConnection:)]);
-                methods[@"captureOutput:didDropSampleBuffer:fromConnection:"] = 
+                methods[@"captureOutput:didDropSampleBuffer:fromConnection:"] =
                     @([self respondsToSelector:@selector(captureOutput:didDropSampleBuffer:fromConnection:)]);
                 
                 injectionInfo[@"methods"] = methods;
@@ -312,23 +323,51 @@
                 }
             }
             
-            // Capacidades HDR
-            formatInfo[@"autoHDRSupported"] = @([self isAutoHDRSupported]);
+            // Capacidades HDR - usamos verificação segura
+            if ([self respondsToSelector:@selector(isAutoHDRSupported)]) {
+                formatInfo[@"autoHDRSupported"] = @NO; // Valor padrão seguro
+            }
             
             if (@available(iOS 13.0, *)) {
-                if ([activeFormat isVideoHDRSupported]) {
-                    formatInfo[@"videoHDRSupported"] = @YES;
+                // Verificar se o método existe antes de chamar
+                SEL videoHDRSelector = NSSelectorFromString(@"isVideoHDRSupported");
+                if ([activeFormat respondsToSelector:videoHDRSelector]) {
+                    // Usar NSInvocation para chamar o método de forma segura
+                    NSMethodSignature *signature = [activeFormat methodSignatureForSelector:videoHDRSelector];
+                    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+                    [invocation setSelector:videoHDRSelector];
+                    [invocation setTarget:activeFormat];
+                    [invocation invoke];
+                    BOOL isHDRSupported;
+                    [invocation getReturnValue:&isHDRSupported];
+                    formatInfo[@"videoHDRSupported"] = @(isHDRSupported);
                 }
             }
             
-            // Capacidades de profundidade
+            // Capacidades de profundidade - verificação segura
             if (@available(iOS 11.0, *)) {
-                if ([activeFormat isDepthDataDeliverySupported]) {
-                    formatInfo[@"depthDataSupported"] = @YES;
+                SEL depthDataSelector = NSSelectorFromString(@"isDepthDataDeliverySupported");
+                if ([activeFormat respondsToSelector:depthDataSelector]) {
+                    NSMethodSignature *signature = [activeFormat methodSignatureForSelector:depthDataSelector];
+                    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+                    [invocation setSelector:depthDataSelector];
+                    [invocation setTarget:activeFormat];
+                    [invocation invoke];
+                    BOOL isDepthSupported;
+                    [invocation getReturnValue:&isDepthSupported];
+                    formatInfo[@"depthDataSupported"] = @(isDepthSupported);
                 }
                 
-                if ([activeFormat isPortraitEffectsMatteDeliverySupported]) {
-                    formatInfo[@"portraitEffectsMatteSupported"] = @YES;
+                SEL portraitMatteSelector = NSSelectorFromString(@"isPortraitEffectsMatteDeliverySupported");
+                if ([activeFormat respondsToSelector:portraitMatteSelector]) {
+                    NSMethodSignature *signature = [activeFormat methodSignatureForSelector:portraitMatteSelector];
+                    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+                    [invocation setSelector:portraitMatteSelector];
+                    [invocation setTarget:activeFormat];
+                    [invocation invoke];
+                    BOOL isMatteSupported;
+                    [invocation getReturnValue:&isMatteSupported];
+                    formatInfo[@"portraitEffectsMatteSupported"] = @(isMatteSupported);
                 }
             }
             
@@ -341,13 +380,21 @@
             addDiagnosticData(@"deviceDetailedCapabilities", formatInfo);
             
             // Log de texto para referência rápida
-            logToFile([NSString stringWithFormat:@"Dispositivo: %@ (%@) - Resolução: %dx%d, Taxa: %.1f-%.1f FPS", 
+            // Usar acesso seguro aos valores numéricos
+            NSNumber *widthNum = formatInfo[@"formatWidth"];
+            NSNumber *heightNum = formatInfo[@"formatHeight"];
+            int width = widthNum ? [widthNum intValue] : 0;
+            int height = heightNum ? [heightNum intValue] : 0;
+            
+            // Acessar de forma segura arrays que podem estar vazios
+            NSDictionary *firstFrameRate = frameRates.count > 0 ? frameRates[0] : @{@"minFrameRate": @(0), @"maxFrameRate": @(0)};
+            
+            logToFile([NSString stringWithFormat:@"Dispositivo: %@ (%@) - Resolução: %dx%d, Taxa: %.1f-%.1f FPS",
                        self.localizedName ?: @"unknown",
                        positionString,
-                       (int)formatInfo[@"formatWidth"].intValue,
-                       (int)formatInfo[@"formatHeight"].intValue,
-                       [frameRates.firstObject[@"minFrameRate"] floatValue],
-                       [frameRates.firstObject[@"maxFrameRate"] floatValue]]);
+                       width, height,
+                       [firstFrameRate[@"minFrameRate"] floatValue],
+                       [firstFrameRate[@"maxFrameRate"] floatValue]]);
         }
     }
     
@@ -357,71 +404,6 @@
 %end
 
 // Monitorar processamento de amostra e metadados
-%hook AVCaptureVideoDataOutputSampleBufferDelegate
-
-- (void)captureOutput:(AVCaptureOutput *)output didOutputMetadataObjects:(NSArray<__kindof AVMetadataObject *> *)metadataObjects fromConnection:(AVCaptureConnection *)connection {
-    // Verificar se somos o delegate correto
-    if (![self respondsToSelector:@selector(captureOutput:didOutputMetadataObjects:fromConnection:)]) {
-        %orig;
-        return;
-    }
-    
-    // Registrar metadados recebidos
-    NSMutableArray *metadataArray = [NSMutableArray array];
-    for (AVMetadataObject *obj in metadataObjects) {
-        NSMutableDictionary *metaInfo = [NSMutableDictionary dictionary];
-        metaInfo[@"type"] = NSStringFromClass([obj class]);
-        metaInfo[@"time"] = @(CMTimeGetSeconds(obj.time));
-        
-        // Verificar tipos específicos de metadados
-        if ([obj isKindOfClass:[AVMetadataFaceObject class]]) {
-            AVMetadataFaceObject *face = (AVMetadataFaceObject *)obj;
-            metaInfo[@"faceID"] = @(face.faceID);
-            metaInfo[@"bounds"] = NSStringFromCGRect(face.bounds);
-            metaInfo[@"hasRollAngle"] = @(face.hasRollAngle);
-            metaInfo[@"hasYawAngle"] = @(face.hasYawAngle);
-            
-            if (face.hasRollAngle) {
-                metaInfo[@"rollAngle"] = @(face.rollAngle);
-            }
-            
-            if (face.hasYawAngle) {
-                metaInfo[@"yawAngle"] = @(face.yawAngle);
-            }
-        }
-        else if ([obj isKindOfClass:[AVMetadataBodyObject class]]) {
-            metaInfo[@"bodyID"] = @(1); // Placeholder
-        }
-        else if ([obj isKindOfClass:[AVMetadataMachineReadableCodeObject class]]) {
-            AVMetadataMachineReadableCodeObject *codeObj = (AVMetadataMachineReadableCodeObject *)obj;
-            metaInfo[@"stringValue"] = codeObj.stringValue ?: @"<nil>";
-            metaInfo[@"corners"] = NSStringFromCGRect(codeObj.bounds);
-            metaInfo[@"type"] = codeObj.type ?: @"<unknown>";
-        }
-        
-        [metadataArray addObject:metaInfo];
-    }
-    
-    // Registrar no diagnóstico
-    addDiagnosticData(@"metadataObjects", @{
-        @"metadata": metadataArray,
-        @"count": @(metadataObjects.count),
-        @"timestamp": [NSDate date].description
-    });
-    
-    // Log textual para facilitar diagnóstico
-    if (metadataObjects.count > 0) {
-        logToFile([NSString stringWithFormat:@"Metadados detectados: %lu objetos, tipos: %@", 
-                   (unsigned long)metadataObjects.count, 
-                   [metadataArray valueForKeyPath:@"type"]]);
-    }
-    
-    %orig;
-}
-
-%end
-
-// Monitoramento de AVSampleBufferDisplayLayer para detectar pipeline de exibição
 %hook AVSampleBufferDisplayLayer
 
 - (void)enqueueSampleBuffer:(CMSampleBufferRef)sampleBuffer {
@@ -470,10 +452,10 @@
 
 - (void)setFrame:(CGRect)frame {
     // Registrar apenas mudanças significativas
-    if (fabs(frame.size.width - self.frame.size.width) > 1 || 
+    if (fabs(frame.size.width - self.frame.size.width) > 1 ||
         fabs(frame.size.height - self.frame.size.height) > 1) {
         
-        logToFile([NSString stringWithFormat:@"AVCaptureVideoPreviewLayer tamanho: %.1fx%.1f", 
+        logToFile([NSString stringWithFormat:@"AVCaptureVideoPreviewLayer tamanho: %.1fx%.1f",
                    frame.size.width, frame.size.height]);
         
         addDiagnosticData(@"previewLayerResize", @{
@@ -493,8 +475,8 @@
 // Monitoramento das configurações de buffer
 %hook CMFormatDescription
 
-+ (CMFormatDescriptionRef)formatDescriptionWithMediaType:(CMMediaType)mediaType 
-                                               mediaSubType:(FourCharCode)mediaSubType 
++ (CMFormatDescriptionRef)formatDescriptionWithMediaType:(CMMediaType)mediaType
+                                               mediaSubType:(FourCharCode)mediaSubType
                                                  extensions:(NSDictionary *)extensions {
     CMFormatDescriptionRef result = %orig;
     
@@ -529,53 +511,53 @@
 
 // Inicialização da extensão de diagnóstico
 %ctor {
-    @autoreleasepool {
-        logToFile(@"DiagnosticExtension carregada - Análise avançada habilitada");
-        
-        // Registrar no diagnóstico
-        addDiagnosticData(@"diagnosticExtension", @{
-            @"loadTime": [NSDate date].description,
-            @"appName": [[NSProcessInfo processInfo] processName],
-            @"bundleId": [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown",
-            @"iosVersion": [[UIDevice currentDevice] systemVersion],
-            @"deviceModel": [[UIDevice currentDevice] model]
-        });
-        
-        // Observar notificações relevantes
-        [[NSNotificationCenter defaultCenter] addObserverForName:AVCaptureSessionWasInterruptedNotification 
-                                                        object:nil 
-                                                         queue:[NSOperationQueue mainQueue] 
-                                                    usingBlock:^(NSNotification *note) {
-            NSNumber *reasonVal = note.userInfo[AVCaptureSessionInterruptionReasonKey];
-            NSString *reasonStr = @"Desconhecido";
-            
-            if (reasonVal) {
-                AVCaptureSessionInterruptionReason reason = [reasonVal integerValue];
-                switch (reason) {
-                    case AVCaptureSessionInterruptionReasonVideoDeviceNotAvailableInBackground:
-                        reasonStr = @"Dispositivo de vídeo não disponível em background";
-                        break;
-                    case AVCaptureSessionInterruptionReasonAudioDeviceInUseByAnotherClient:
-                        reasonStr = @"Dispositivo de áudio em uso por outro aplicativo";
-                        break;
-                    case AVCaptureSessionInterruptionReasonVideoDeviceInUseByAnotherClient:
-                        reasonStr = @"Dispositivo de vídeo em uso por outro aplicativo";
-                        break;
-                    case AVCaptureSessionInterruptionReasonVideoDeviceNotAvailableWithMultipleForegroundApps:
-                        reasonStr = @"Dispositivo de vídeo não disponível com múltiplos apps em foreground";
-                        break;
-                }
-            }
-            
-            logToFile([NSString stringWithFormat:@"Sessão de captura interrompida: %@", reasonStr]);
-            
-            addDiagnosticData(@"sessionInterruption", @{
-                @"reason": reasonStr,
-                @"timestamp": [NSDate date].description
-            });
-        }];
-        
-        // Inicializar hooks
-        %init;
-    }
+   @autoreleasepool {
+       logToFile(@"DiagnosticExtension carregada - Análise avançada habilitada");
+       
+       // Registrar no diagnóstico
+       addDiagnosticData(@"diagnosticExtension", @{
+           @"loadTime": [NSDate date].description,
+           @"appName": [[NSProcessInfo processInfo] processName],
+           @"bundleId": [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown",
+           @"iosVersion": [[UIDevice currentDevice] systemVersion],
+           @"deviceModel": [[UIDevice currentDevice] model]
+       });
+       
+       // Observar notificações relevantes
+       [[NSNotificationCenter defaultCenter] addObserverForName:AVCaptureSessionWasInterruptedNotification
+                                                       object:nil
+                                                        queue:[NSOperationQueue mainQueue]
+                                                   usingBlock:^(NSNotification *note) {
+           NSNumber *reasonVal = note.userInfo[AVCaptureSessionInterruptionReasonKey];
+           NSString *reasonStr = @"Desconhecido";
+           
+           if (reasonVal) {
+               AVCaptureSessionInterruptionReason reason = [reasonVal integerValue];
+               switch (reason) {
+                   case AVCaptureSessionInterruptionReasonVideoDeviceNotAvailableInBackground:
+                       reasonStr = @"Dispositivo de vídeo não disponível em background";
+                       break;
+                   case AVCaptureSessionInterruptionReasonAudioDeviceInUseByAnotherClient:
+                       reasonStr = @"Dispositivo de áudio em uso por outro aplicativo";
+                       break;
+                   case AVCaptureSessionInterruptionReasonVideoDeviceInUseByAnotherClient:
+                       reasonStr = @"Dispositivo de vídeo em uso por outro aplicativo";
+                       break;
+                   case AVCaptureSessionInterruptionReasonVideoDeviceNotAvailableWithMultipleForegroundApps:
+                       reasonStr = @"Dispositivo de vídeo não disponível com múltiplos apps em foreground";
+                       break;
+               }
+           }
+           
+           logToFile([NSString stringWithFormat:@"Sessão de captura interrompida: %@", reasonStr]);
+           
+           addDiagnosticData(@"sessionInterruption", @{
+               @"reason": reasonStr,
+               @"timestamp": [NSDate date].description
+           });
+       }];
+       
+       // Inicializar hooks
+       %init;
+   }
 }

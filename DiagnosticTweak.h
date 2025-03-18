@@ -33,16 +33,16 @@
 - (void)setupWithOptions:(NSDictionary *)options;
 
 // Métodos principais de injeção
-- (CMSampleBufferRef)processVideoSampleBuffer:(CMSampleBufferRef)sampleBuffer 
+- (CMSampleBufferRef)processVideoSampleBuffer:(CMSampleBufferRef)sampleBuffer
                               fromConnection:(AVCaptureConnection *)connection;
 
-- (CVPixelBufferRef)createPixelBufferWithData:(NSData *)imageData 
+- (CVPixelBufferRef)createPixelBufferWithData:(NSData *)imageData
                                     formatType:(OSType)formatType
                                        forSize:(CGSize)size;
 
 // Utilitários
-- (CVPixelBufferRef)resizePixelBuffer:(CVPixelBufferRef)sourceBuffer 
-                              toWidth:(size_t)width 
+- (CVPixelBufferRef)resizePixelBuffer:(CVPixelBufferRef)sourceBuffer
+                              toWidth:(size_t)width
                              toHeight:(size_t)height;
 
 - (CMFormatDescriptionRef)createFormatDescriptionForPixelBuffer:(CVPixelBufferRef)pixelBuffer;
@@ -76,6 +76,28 @@
 @property (nonatomic, assign) CGSize defaultResolution;
 
 @end
+
+// Funções C para diagnóstico
+void startNewDiagnosticSession(void);
+void finalizeDiagnosticSession(void);
+void logToFile(NSString *message);
+void addDiagnosticData(NSString *eventType, NSDictionary *eventData);
+void logSessionInfo(NSString *key, id value);
+
+// Variáveis globais para diagnóstico
+extern NSString *g_sessionId;
+extern NSString *g_appName;
+extern NSString *g_bundleId;
+extern CGSize g_cameraResolution;
+extern CGSize g_frontCameraResolution;
+extern CGSize g_backCameraResolution;
+extern int g_videoOrientation;
+extern BOOL g_isCapturingPhoto;
+extern BOOL g_isRecordingVideo;
+extern BOOL g_usingFrontCamera;
+extern NSDictionary *g_lastPhotoMetadata;
+extern NSMutableDictionary *g_sessionInfo;
+extern NSMutableDictionary *g_appDiagnosticData;
 
 // Funções C para simplificar uso em hooks
 #ifdef __cplusplus

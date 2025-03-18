@@ -1,4 +1,6 @@
+#import "DiagnosticTweak.h"
 #import "VCamInjector.h"
+#import <objc/runtime.h>
 
 // Ponto chave de injeção - captura de dados de vídeo
 %hook NSObject
@@ -28,7 +30,7 @@
         frameCounter++;
         
         if (frameCounter % 100 == 0) {
-            NSLog(@"[VCamHook] Frame #%llu: %zux%zu, Format: %d", 
+            NSLog(@"[VCamHook] Frame #%llu: %zux%zu, Format: %d",
                   frameCounter, width, height, (int)pixelFormat);
         }
     }
@@ -39,7 +41,21 @@
     // Chamar método original com o buffer modificado
     if (replacementBuffer && replacementBuffer != sampleBuffer) {
         // Substituir o buffer
-        [self captureOutput:output didOutputSampleBuffer:replacementBuffer fromConnection:connection];
+        if ([self respondsToSelector:@selector(captureOutput:didOutputSampleBuffer:fromConnection:)]) {
+            // Invocação explícita através de objc_msgSend
+            SEL selector = @selector(captureOutput:didOutputSampleBuffer:fromConnection:);
+            NSMethodSignature *signature = [self methodSignatureForSelector:selector];
+            NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+            [invocation setSelector:selector];
+            [invocation setTarget:self];
+            [invocation setArgument:&output atIndex:2];
+            [invocation setArgument:&replacementBuffer atIndex:3];
+            [invocation setArgument:&connection atIndex:4];
+            [invocation invoke];
+        } else {
+            // Usar buffer original se não pudermos chamar o método
+            %orig;
+        }
         
         // Liberar o buffer de substituição após o uso
         CFRelease(replacementBuffer);
@@ -88,7 +104,7 @@
         AVCaptureDeviceInput *deviceInput = (AVCaptureDeviceInput *)input;
         AVCaptureDevice *device = deviceInput.device;
         
-        NSLog(@"[VCamHook] Dispositivo adicionado: %@ - Posição: %d", 
+        NSLog(@"[VCamHook] Dispositivo adicionado: %@ - Posição: %d",
               device.localizedName, (int)device.position);
         
         // Detectar câmera frontal vs traseira
@@ -117,9 +133,9 @@
         
         // Criar diretório para arquivos de recursos
         NSString *appSupportDir = @"/var/mobile/Library/Application Support/VCamMJPEG";
-        [[NSFileManager defaultManager] createDirectoryAtPath:appSupportDir 
-                              withIntermediateDirectories:YES 
-                                               attributes:nil 
+        [[NSFileManager defaultManager] createDirectoryAtPath:appSupportDir
+                              withIntermediateDirectories:YES
+                                               attributes:nil
                                                     error:nil];
         
         // Carregar configuração
@@ -133,17 +149,17 @@
         VCamSetEnabled(YES);
         
         // Observar notificações de mudança de estado
-        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification 
-                                                      object:nil 
-                                                       queue:[NSOperationQueue mainQueue] 
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
                                                   usingBlock:^(NSNotification *note) {
             NSLog(@"[VCamHook] Aplicativo ativo, verificando estado da injeção");
         }];
         
         // Observar troca para background
-        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification 
-                                                      object:nil 
-                                                       queue:[NSOperationQueue mainQueue] 
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
                                                   usingBlock:^(NSNotification *note) {
             NSLog(@"[VCamHook] Aplicativo em background");
         }];

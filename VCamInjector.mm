@@ -13,6 +13,11 @@ static NSString * const kSourceTypeJPEG = @"jpeg";
 static NSString * const kSourceTypeStream = @"stream";
 static NSString * const kSourceTypeCamera = @"camera";
 
+// Constante que estava faltando
+#ifndef kCVPixelBufferMemoryPoolKey
+#define kCVPixelBufferMemoryPoolKey CFSTR("MemoryPool")
+#endif
+
 // Globais privadas para acesso rápido em hooks
 static BOOL g_vcam_enabled = NO;
 static uint64_t g_frameCounter = 0;
@@ -32,130 +37,6 @@ static int g_processedFrameCount = 0;
     CMFormatDescriptionRef _outputFormatDescription;
     NSCache *_imageCache;
     CMMemoryPoolRef _memoryPool;
-
-
-- (void)saveSettings {
-    // Salvar configurações atuais no arquivo
-    NSDictionary *settings = [self currentSettings];
-    [settings writeToFile:_configPath atomically:YES];
-    
-    // Salvar também no NSUserDefaults como backup
-    [_defaults setObject:self.sourceType forKey:@"VCamSourceType"];
-    [_defaults setObject:self.sourcePath forKey:@"VCamSourcePath"];
-    [_defaults setBool:self.preserveAspectRatio forKey:@"VCamPreserveAspectRatio"];
-    [_defaults setBool:self.mirrorOutput forKey:@"VCamMirrorOutput"];
-    [_defaults setBool:self.applyFilters forKey:@"VCamApplyFilters"];
-    [_defaults setBool:self.matchOriginalFPS forKey:@"VCamMatchOriginalFPS"];
-    [_defaults setFloat:self.defaultResolution.width forKey:@"VCamDefaultWidth"];
-    [_defaults setFloat:self.defaultResolution.height forKey:@"VCamDefaultHeight"];
-    [_defaults synchronize];
-    
-    VCAMLog(@"Configurações salvas em: %@", _configPath);
-}
-
-- (void)resetToDefaults {
-    // Restaurar valores padrão
-    self.sourceType = kSourceTypeFile;
-    self.sourcePath = @"/var/mobile/Library/Application Support/VCamMJPEG/default.jpg";
-    self.preserveAspectRatio = YES;
-    self.mirrorOutput = NO;
-    self.applyFilters = NO;
-    self.matchOriginalFPS = YES;
-    self.defaultResolution = CGSizeMake(1280, 720);
-    
-    // Salvar configurações padrão
-    [self saveSettings];
-    
-    VCAMLog(@"Configurações restauradas para valores padrão");
-}
-
-@end
-
-#pragma mark - Funções C para uso em hooks
-
-CMSampleBufferRef VCamCreateReplacementSampleBuffer(CMSampleBufferRef original, AVCaptureConnection *connection) {
-    return [[VCamInjector sharedInstance] processVideoSampleBuffer:original fromConnection:connection];
-}
-
-BOOL VCamShouldReplaceFrame(void) {
-    return g_vcam_enabled;
-}
-
-void VCamSetEnabled(BOOL enabled) {
-    g_vcam_enabled = enabled;
-    [VCamInjector sharedInstance].enabled = enabled;
-}
-
-CVPixelBufferRef VCamCreatePixelBuffer(size_t width, size_t height, OSType pixelFormat) {
-    NSDictionary *options = @{
-        (NSString *)kCVPixelBufferCGImageCompatibilityKey: @YES,
-        (NSString *)kCVPixelBufferCGBitmapContextCompatibilityKey: @YES
-    };
-    
-    CVPixelBufferRef pixelBuffer = NULL;
-    CVReturn status = CVPixelBufferCreate(
-        kCFAllocatorDefault,
-        width,
-        height,
-        pixelFormat,
-        (__bridge CFDictionaryRef)options,
-        &pixelBuffer
-    );
-    
-    if (status != kCVReturnSuccess) {
-        VCAMLog(@"Falha ao criar pixel buffer: %d", status);
-        return NULL;
-    }
-    
-    return pixelBuffer;
-}
-
-UIImage *VCamImageFromPixelBuffer(CVPixelBufferRef pixelBuffer) {
-    if (!pixelBuffer) {
-        return nil;
-    }
-    
-    CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
-    
-    size_t width = CVPixelBufferGetWidth(pixelBuffer);
-    size_t height = CVPixelBufferGetHeight(pixelBuffer);
-    void *baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer);
-    size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    
-    CGContextRef context = CGBitmapContextCreate(
-        baseAddress,
-        width,
-        height,
-        8,
-        bytesPerRow,
-        colorSpace,
-        kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little
-    );
-    
-    CGImageRef cgImage = CGBitmapContextCreateImage(context);
-    
-    CGContextRelease(context);
-    CGColorSpaceRelease(colorSpace);
-    
-    CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
-    
-    UIImage *image = [UIImage imageWithCGImage:cgImage];
-    CGImageRelease(cgImage);
-    
-    return image;
-}
-
-NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality) {
-    UIImage *image = VCamImageFromPixelBuffer(pixelBuffer);
-    
-    if (!image) {
-        return nil;
-    }
-    
-    return UIImageJPEGRepresentation(image, quality);
-}
-
 }
 
 #pragma mark - Inicialização
@@ -194,8 +75,8 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
             g_pixelBufferCache = [NSMutableDictionary dictionary];
         }
         
-        // Criar pool de memória
-        CMMemoryPoolCreate(NULL, &_memoryPool);
+        // Criar pool de memória - corrigido para usar a assinatura correta
+        _memoryPool = CMMemoryPoolCreate(NULL);
         
         VCAMLog(@"Injetor de câmera virtual inicializado");
     }
@@ -254,13 +135,13 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
     // Atualizar estado global
     g_vcam_enabled = self.enabled;
     
-    VCAMLog(@"Configuração atualizada: enabled=%d, sourceType=%@, targetRes=%@", 
+    VCAMLog(@"Configuração atualizada: enabled=%d, sourceType=%@, targetRes=%@",
            self.enabled, self.sourceType, NSStringFromCGSize(self.targetResolution));
 }
 
 #pragma mark - Métodos de Processamento Principal
 
-- (CMSampleBufferRef)processVideoSampleBuffer:(CMSampleBufferRef)sampleBuffer 
+- (CMSampleBufferRef)processVideoSampleBuffer:(CMSampleBufferRef)sampleBuffer
                               fromConnection:(AVCaptureConnection *)connection {
     if (!sampleBuffer || !self.enabled) {
         return sampleBuffer;
@@ -309,11 +190,11 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
         // Usar imagem de arquivo
         NSString *filePath = [[VCamConfiguration sharedConfig] sourcePath];
         replacementBuffer = [self pixelBufferFromFile:filePath];
-    } 
+    }
     else if ([self.sourceType isEqualToString:kSourceTypeJPEG]) {
         // Implementação para dados JPEG (ex: de streaming)
         // Código omitido para brevidade
-    } 
+    }
     else if ([self.sourceType isEqualToString:kSourceTypeStream]) {
         // Implementação para stream (ex: RTSP/HLS)
         // Código omitido para brevidade
@@ -326,11 +207,11 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
     }
     
     // Redimensionar o buffer se necessário
-    if (CVPixelBufferGetWidth(replacementBuffer) != targetSize.width || 
+    if (CVPixelBufferGetWidth(replacementBuffer) != targetSize.width ||
         CVPixelBufferGetHeight(replacementBuffer) != targetSize.height) {
         
-        CVPixelBufferRef resizedBuffer = [self resizePixelBuffer:replacementBuffer 
-                                                        toWidth:targetSize.width 
+        CVPixelBufferRef resizedBuffer = [self resizePixelBuffer:replacementBuffer
+                                                        toWidth:targetSize.width
                                                        toHeight:targetSize.height];
         
         if (resizedBuffer) {
@@ -369,28 +250,32 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
     
     // Copiar metadados e attachments do buffer original
     if (status == noErr && modifiedSampleBuffer) {
-        CFDictionaryRef originalAttachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, true);
-        CFDictionaryRef newAttachments = CMSampleBufferGetSampleAttachmentsArray(modifiedSampleBuffer, true);
+        // Corrigido: CMSampleBufferGetSampleAttachmentsArray retorna CFArrayRef, não CFDictionaryRef
+        CFArrayRef originalAttachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, true);
+        CFArrayRef newAttachmentsArray = CMSampleBufferGetSampleAttachmentsArray(modifiedSampleBuffer, true);
         
-        if (originalAttachments && newAttachments) {
+        if (originalAttachmentsArray && newAttachmentsArray) {
             // Copiar todos os attachments para manter metadados importantes
-            CFIndex count = CFArrayGetCount(originalAttachments);
+            CFIndex count = CFArrayGetCount(originalAttachmentsArray);
+            
             for (CFIndex i = 0; i < count; i++) {
-                CFDictionaryRef originalDict = (CFDictionaryRef)CFArrayGetValueAtIndex(originalAttachments, i);
-                CFMutableDictionaryRef newDict = (CFMutableDictionaryRef)CFArrayGetValueAtIndex(newAttachments, i);
+                CFDictionaryRef originalDict = (CFDictionaryRef)CFArrayGetValueAtIndex(originalAttachmentsArray, i);
+                CFMutableDictionaryRef newDict = (CFMutableDictionaryRef)CFArrayGetValueAtIndex(newAttachmentsArray, i);
                 
-                CFIndex dictCount = CFDictionaryGetCount(originalDict);
-                CFTypeRef *keys = (CFTypeRef *)malloc(sizeof(CFTypeRef) * dictCount);
-                CFTypeRef *values = (CFTypeRef *)malloc(sizeof(CFTypeRef) * dictCount);
-                
-                CFDictionaryGetKeysAndValues(originalDict, keys, values);
-                
-                for (CFIndex j = 0; j < dictCount; j++) {
-                    CFDictionarySetValue(newDict, keys[j], values[j]);
+                if (originalDict && newDict) {
+                    CFIndex dictCount = CFDictionaryGetCount(originalDict);
+                    const void **keys = (const void **)malloc(sizeof(const void *) * dictCount);
+                    const void **values = (const void **)malloc(sizeof(const void *) * dictCount);
+                    
+                    CFDictionaryGetKeysAndValues(originalDict, keys, values);
+                    
+                    for (CFIndex j = 0; j < dictCount; j++) {
+                        CFDictionarySetValue(newDict, keys[j], values[j]);
+                    }
+                    
+                    free(keys);
+                    free(values);
                 }
-                
-                free(keys);
-                free(values);
             }
         }
     }
@@ -415,7 +300,7 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
     
     // Registrar informações de processamento periodicamente
     if (g_frameCounter % 100 == 0) {
-        VCAMLog(@"Frame #%llu processado em %.3fms (média: %.3fms)", 
+        VCAMLog(@"Frame #%llu processado em %.3fms (média: %.3fms)",
                g_frameCounter, processingTime * 1000, g_avgProcessingTime * 1000);
     }
     
@@ -428,7 +313,7 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
 
 #pragma mark - Utilitários de Pixel Buffer
 
-- (CVPixelBufferRef)createPixelBufferWithData:(NSData *)imageData 
+- (CVPixelBufferRef)createPixelBufferWithData:(NSData *)imageData
                                   formatType:(OSType)formatType
                                      forSize:(CGSize)size {
     if (!imageData || imageData.length == 0) {
@@ -441,7 +326,7 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
     NSDictionary *options = @{
         (NSString *)kCVPixelBufferCGImageCompatibilityKey: @YES,
         (NSString *)kCVPixelBufferCGBitmapContextCompatibilityKey: @YES,
-        (NSString *)kCVPixelBufferMemoryPoolKey: (__bridge id)_memoryPool
+        (id)kCVPixelBufferMemoryPoolKey: (__bridge id)_memoryPool
     };
     
     CVReturn result = CVPixelBufferCreate(
@@ -465,8 +350,8 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
     return pixelBuffer;
 }
 
-- (CVPixelBufferRef)resizePixelBuffer:(CVPixelBufferRef)sourceBuffer 
-                            toWidth:(size_t)width 
+- (CVPixelBufferRef)resizePixelBuffer:(CVPixelBufferRef)sourceBuffer
+                            toWidth:(size_t)width
                            toHeight:(size_t)height {
     if (!sourceBuffer) {
         return NULL;
@@ -482,7 +367,7 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
     NSDictionary *options = @{
         (NSString *)kCVPixelBufferCGImageCompatibilityKey: @YES,
         (NSString *)kCVPixelBufferCGBitmapContextCompatibilityKey: @YES,
-        (NSString *)kCVPixelBufferMemoryPoolKey: (__bridge id)_memoryPool
+        (id)kCVPixelBufferMemoryPoolKey: (__bridge id)_memoryPool
     };
     
     CVReturn result = CVPixelBufferCreate(
@@ -598,7 +483,7 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
     NSDictionary *options = @{
         (NSString *)kCVPixelBufferCGImageCompatibilityKey: @YES,
         (NSString *)kCVPixelBufferCGBitmapContextCompatibilityKey: @YES,
-        (NSString *)kCVPixelBufferMemoryPoolKey: (__bridge id)_memoryPool
+        (id)kCVPixelBufferMemoryPoolKey: (__bridge id)_memoryPool
     };
     
     // Criar buffer de pixel
@@ -743,9 +628,9 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
         
         // Diretório de configuração
         NSString *appSupportDir = @"/var/mobile/Library/Application Support/VCamMJPEG";
-        [[NSFileManager defaultManager] createDirectoryAtPath:appSupportDir 
-                              withIntermediateDirectories:YES 
-                                               attributes:nil 
+        [[NSFileManager defaultManager] createDirectoryAtPath:appSupportDir
+                              withIntermediateDirectories:YES
+                                               attributes:nil
                                                     error:nil];
         
         _configPath = [appSupportDir stringByAppendingPathComponent:@"config.plist"];
@@ -845,4 +730,126 @@ NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality)
         
         VCAMLog(@"Configurações carregadas dos padrões");
     }
+}
+
+- (void)saveSettings {
+    // Salvar configurações atuais no arquivo
+    NSDictionary *settings = [self currentSettings];
+    [settings writeToFile:_configPath atomically:YES];
+    
+    // Salvar também no NSUserDefaults como backup
+    [_defaults setObject:self.sourceType forKey:@"VCamSourceType"];
+    [_defaults setObject:self.sourcePath forKey:@"VCamSourcePath"];
+    [_defaults setBool:self.preserveAspectRatio forKey:@"VCamPreserveAspectRatio"];
+    [_defaults setBool:self.mirrorOutput forKey:@"VCamMirrorOutput"];
+    [_defaults setBool:self.applyFilters forKey:@"VCamApplyFilters"];
+    [_defaults setBool:self.matchOriginalFPS forKey:@"VCamMatchOriginalFPS"];
+    [_defaults setFloat:self.defaultResolution.width forKey:@"VCamDefaultWidth"];
+    [_defaults setFloat:self.defaultResolution.height forKey:@"VCamDefaultHeight"];
+    [_defaults synchronize];
+    
+    VCAMLog(@"Configurações salvas em: %@", _configPath);
+}
+
+- (void)resetToDefaults {
+   // Restaurar valores padrão
+   self.sourceType = kSourceTypeFile;
+   self.sourcePath = @"/var/mobile/Library/Application Support/VCamMJPEG/default.jpg";
+   self.preserveAspectRatio = YES;
+   self.mirrorOutput = NO;
+   self.applyFilters = NO;
+   self.matchOriginalFPS = YES;
+   self.defaultResolution = CGSizeMake(1280, 720);
+   
+   // Salvar configurações padrão
+   [self saveSettings];
+   
+   VCAMLog(@"Configurações restauradas para valores padrão");
+}
+
+@end
+
+#pragma mark - Funções C para uso em hooks
+
+CMSampleBufferRef VCamCreateReplacementSampleBuffer(CMSampleBufferRef original, AVCaptureConnection *connection) {
+   return [[VCamInjector sharedInstance] processVideoSampleBuffer:original fromConnection:connection];
+}
+
+BOOL VCamShouldReplaceFrame(void) {
+   return g_vcam_enabled;
+}
+
+void VCamSetEnabled(BOOL enabled) {
+   g_vcam_enabled = enabled;
+   [VCamInjector sharedInstance].enabled = enabled;
+}
+
+CVPixelBufferRef VCamCreatePixelBuffer(size_t width, size_t height, OSType pixelFormat) {
+   NSDictionary *options = @{
+       (NSString *)kCVPixelBufferCGImageCompatibilityKey: @YES,
+       (NSString *)kCVPixelBufferCGBitmapContextCompatibilityKey: @YES
+   };
+   
+   CVPixelBufferRef pixelBuffer = NULL;
+   CVReturn status = CVPixelBufferCreate(
+       kCFAllocatorDefault,
+       width,
+       height,
+       pixelFormat,
+       (__bridge CFDictionaryRef)options,
+       &pixelBuffer
+   );
+   
+   if (status != kCVReturnSuccess) {
+       VCAMLog(@"Falha ao criar pixel buffer: %d", status);
+       return NULL;
+   }
+   
+   return pixelBuffer;
+}
+
+UIImage *VCamImageFromPixelBuffer(CVPixelBufferRef pixelBuffer) {
+   if (!pixelBuffer) {
+       return nil;
+   }
+   
+   CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+   
+   size_t width = CVPixelBufferGetWidth(pixelBuffer);
+   size_t height = CVPixelBufferGetHeight(pixelBuffer);
+   void *baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer);
+   size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
+   CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+   
+   CGContextRef context = CGBitmapContextCreate(
+       baseAddress,
+       width,
+       height,
+       8,
+       bytesPerRow,
+       colorSpace,
+       kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little
+   );
+   
+   CGImageRef cgImage = CGBitmapContextCreateImage(context);
+   
+   CGContextRelease(context);
+   CGColorSpaceRelease(colorSpace);
+   
+   CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+   
+   UIImage *image = [UIImage imageWithCGImage:cgImage];
+   CGImageRelease(cgImage);
+   
+   return image;
+}
+
+NSData *VCamJPEGDataFromPixelBuffer(CVPixelBufferRef pixelBuffer, float quality) {
+   UIImage *image = VCamImageFromPixelBuffer(pixelBuffer);
+   
+   if (!image) {
+       return nil;
+   }
+   
+   return UIImageJPEGRepresentation(image, quality);
 }

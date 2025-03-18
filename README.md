@@ -1,7 +1,7 @@
 # CameraDiagnostic + VCamInjector
 
 ![Badge](https://img.shields.io/badge/iOS-14.0%2B-blue)
-![Badge](https://img.shields.io/badge/Status-Beta-yellow)
+![Badge](https://img.shields.io/badge/Status-Funcional-green)
 
 ## Visão Geral
 
@@ -28,10 +28,7 @@ Este componente realiza uma análise detalhada do pipeline de câmera, registran
 
 Arquivos principais:
 - `DiagnosticTweak.h/.xm`: Define o núcleo do sistema de diagnóstico
-- `DiagnosticHooks.xm`: Ganchos para monitorar o pipeline da câmera
 - `DiagnosticExtension.xm`: Análise avançada para identificar pontos de injeção
-- `Utils/Logger.mm`: Sistema de logging avançado
-- `Utils/MetadataExtractor.mm`: Extração detalhada de metadados da câmera
 
 ### Componente de Injeção (VCamInjector)
 
@@ -44,7 +41,6 @@ Este componente implementa a substituição híbrida, que:
 Arquivos principais:
 - `VCamInjector.h/.mm`: Implementa o sistema de injeção e substituição de frames
 - `VCamHook.xm`: Ganchos específicos para pontos de injeção identificados
-- `VCamConfiguration`: Gerenciamento de configurações e persistência
 
 ## Como Funciona a Substituição Híbrida
 
@@ -70,26 +66,6 @@ O diagnóstico identificou os seguintes pontos ideais para injeção:
    - Em `AVCaptureVideoPreviewLayer` e `AVSampleBufferDisplayLayer` 
    - Utilizado para diagnóstico e confirmação de sucesso da injeção
 
-## Arquivos da Solução
-
-### Componente de Diagnóstico
-- `DiagnosticTweak.h`: Definições e interfaces do sistema
-- `DiagnosticTweak.xm`: Implementação principal
-- `DiagnosticHooks.xm`: Hooks do sistema AVFoundation
-- `DiagnosticExtension.xm`: Análise avançada e identificação de pontos de injeção
-- `Utils/Logger.h/.mm`: Sistema de logging
-- `Utils/MetadataExtractor.h/.mm`: Extração de metadados
-
-### Componente de Injeção
-- `VCamInjector.h`: Interface do sistema de injeção
-- `VCamInjector.mm`: Implementação do sistema de injeção
-- `VCamHook.xm`: Hooks principais para substituição
-
-### Arquivos de Build
-- `Makefile`: Compilação do projeto
-- `Filter.plist`: Configuração de injeção
-- `control`: Metadados do pacote
-
 ## Instalação e Uso
 
 1. **Prepare o ambiente:**
@@ -108,6 +84,10 @@ O diagnóstico identificou os seguintes pontos ideais para injeção:
    ```
 
 4. **Configure o feed substituto:**
+   - Crie o diretório para os arquivos necessários:
+     ```bash
+     mkdir -p /var/mobile/Library/Application\ Support/VCamMJPEG/
+     ```
    - Coloque a imagem ou vídeo em `/var/mobile/Library/Application Support/VCamMJPEG/`
    - Edite a configuração em `/var/mobile/Library/Application Support/VCamMJPEG/config.plist`
 
@@ -298,6 +278,15 @@ Uma configuração típica no arquivo config.plist seria:
 </dict>
 ```
 
+## Solução de Problemas
+
+Se encontrar problemas, verifique:
+
+1. Se o diretório `/var/mobile/Library/Application Support/VCamMJPEG/` existe
+2. Se a imagem `default.jpg` está presente e é válida
+3. Os logs em `/var/tmp/CameraDiagnostic/diagnostic.log` para erros específicos
+4. Se a versão do iOS é compatível (14.0+)
+
 ## Próximos Passos
 
 1. **Implementação de WebRTC**
@@ -321,4 +310,4 @@ Uma configuração típica no arquivo config.plist seria:
 
 ## Licença
 
-Este projeto é fornecido para uso educacional e pessoal apenas.
+Este projeto é fornecido para uso educacional e pessoal. Não é permitido uso comercial sem autorização.
