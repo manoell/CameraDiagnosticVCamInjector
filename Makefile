@@ -3,7 +3,7 @@ INSTALL_TARGET_PROCESSES = Camera
 
 TWEAK_NAME = CameraDiagnostic VCamInjector
 
-CameraDiagnostic_FILES = DiagnosticTweak.xm DiagnosticHooks.xm Utils/Logger.mm Utils/MetadataExtractor.mm DiagnosticExtension.xm
+CameraDiagnostic_FILES = DiagnosticExtension.xm DiagnosticTweak.xm VCamHook.xm VCamInjector.mm
 CameraDiagnostic_CFLAGS = -fobjc-arc
 CameraDiagnostic_FRAMEWORKS = UIKit AVFoundation CoreMedia CoreVideo CoreGraphics Photos
 
