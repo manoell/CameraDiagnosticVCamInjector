@@ -1,0 +1,9 @@
+Package: com.yourdomain.cameravirtual
+Name: CameraVirtual
+Version: 0.1.0
+Architecture: iphoneos-arm
+Description: Ferramenta de diagnóstico da câmera e substituição de feed para iOS
+Maintainer: Seu Nome <seu.email@exemplo.com>
+Author: Seu Nome <seu.email@exemplo.com>
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 14.0)
